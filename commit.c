@@ -194,8 +194,54 @@ int head_update(const ObjectID *new_commit) {
 //
 // Returns 0 on success, -1 on error.
 int commit_create(const char *message, ObjectID *commit_id_out) {
-    // TODO: Implement commit creation
-    // (See Lab Appendix for logical steps)
-    (void)message; (void)commit_id_out;
-    return -1;
+    Commit commit;
+    ObjectID tree_id;
+
+    // 1. Build the tree from the current index (staging area)
+    if (tree_from_index(&tree_id) != 0) {
+        return -1;
+    }
+    commit.tree = tree_id;
+
+    // 2. Read current HEAD to find the parent commit
+    // If head_read fails (returns -1), it is likely the first commit
+    if (head_read(&commit.parent) == 0) {
+        commit.has_parent = 1;
+    } else {
+        commit.has_parent = 0;
+        memset(&commit.parent, 0, sizeof(ObjectID)); // Zero out the parent ID
+    }
+
+    // 3. Populate metadata from the environment and system clock
+    // Using strncpy to ensure no buffer overflows for the fixed-size arrays
+    strncpy(commit.author, pes_author(), sizeof(commit.author) - 1);
+    commit.author[sizeof(commit.author) - 1] = '\0';
+    
+    strncpy(commit.message, message, sizeof(commit.message) - 1);
+    commit.message[sizeof(commit.message) - 1] = '\0';
+    
+    commit.timestamp = (uint64_t)time(NULL);
+
+    // 4. Serialize the commit struct into the required text format
+    void *data = NULL;
+    size_t len = 0;
+    if (commit_serialize(&commit, &data, &len) != 0) {
+        return -1;
+    }
+
+    // 5. Write the serialized commit as a permanent object
+    if (object_write(OBJ_COMMIT, data, len, commit_id_out) != 0) {
+        free(data);
+        return -1;
+    }
+
+    // 6. Update the branch reference (HEAD) to point to this new commit hash
+    if (head_update(commit_id_out) != 0) {
+        free(data);
+        return -1;
+    }
+
+    free(data);
+    return 0;
 }
+
