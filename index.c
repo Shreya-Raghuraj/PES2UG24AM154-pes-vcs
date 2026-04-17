@@ -224,3 +224,4 @@ int index_add(Index *index, const char *path) {
     // Self-save to satisfy the requirement without touching pes.c
     return index_save(index); 
 }
+ 
