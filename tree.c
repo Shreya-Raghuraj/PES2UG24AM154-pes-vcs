@@ -8,8 +8,11 @@
 //
 // Example single entry (conceptual):
 //   "100644 hello.txt\0" followed by 32 raw bytes of SHA-256
-
+#include "pes.h"
+#include "object.h"
+#include "index.h"
 #include "tree.h"
+#include "index.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -129,9 +132,69 @@ int tree_serialize(const Tree *tree, void **data_out, size_t *len_out) {
 //   - object_write    : save that binary buffer to the store as OBJ_TREE
 //
 // Returns 0 on success, -1 on error.
-int tree_from_index(ObjectID *id_out) {
     // TODO: Implement recursive tree building
     // (See Lab Appendix for logical steps)
-    (void)id_out;
-    return -1;
+// Recursive helper: builds a tree for entries sharing a common prefix/directory
+static int build_recursive(const Index *idx, const char *prefix, ObjectID *id_out) {
+    Tree tree;
+    tree.count = 0;
+    int prefix_len = strlen(prefix);
+    char processed_subdirs[MAX_TREE_ENTRIES][256];
+    int processed_count = 0;
+
+    for (int i = 0; i < idx->count; i++) {
+        const char *path = idx->entries[i].path;
+        
+        // Skip if path doesn't start with current directory prefix
+        if (prefix_len > 0 && (strncmp(path, prefix, prefix_len) != 0 || path[prefix_len] != '/'))
+            continue;
+
+        const char *rel_path = (prefix_len == 0) ? path : path + prefix_len + 1;
+        const char *slash = strchr(rel_path, '/');
+
+        if (!slash) {
+            // It's a file in the current directory
+            TreeEntry *te = &tree.entries[tree.count++];
+            te->mode = idx->entries[i].mode;
+            memcpy(&te->hash, &idx->entries[i].hash, sizeof(ObjectID));
+            strncpy(te->name, rel_path, sizeof(te->name) - 1);
+        } else {
+            // It's a subdirectory - requires a subtree
+            char subdir[256] = {0};
+            strncpy(subdir, rel_path, slash - rel_path);
+
+            // Avoid processing the same subdir multiple times
+            int skip = 0;
+            for(int j=0; j<processed_count; j++) 
+                if(strcmp(processed_subdirs[j], subdir) == 0) { skip = 1; break; }
+            if (skip) continue;
+
+            strncpy(processed_subdirs[processed_count++], subdir, 255);
+            
+            char next_prefix[512];
+            if (prefix_len == 0) strcpy(next_prefix, subdir);
+            else snprintf(next_prefix, sizeof(next_prefix), "%s/%s", prefix, subdir);
+
+            TreeEntry *te = &tree.entries[tree.count++];
+            te->mode = 040000; // Mode for directory
+            strncpy(te->name, subdir, sizeof(te->name) - 1);
+            if (build_recursive(idx, next_prefix, &te->hash) != 0) return -1;
+        }
+    }
+
+    void *data;
+    size_t len;
+    // Serialize and write tree object to store
+    if (tree_serialize(&tree, &data, &len) != 0) return -1;
+    if (object_write(OBJ_TREE, data, len, id_out) != 0) {
+        free(data); return -1;
+    }
+    free(data);
+    return 0;
+}
+
+int tree_from_index(ObjectID *id_out) {
+    Index idx;
+    if (index_load(&idx) != 0) return -1; 
+    return build_recursive(&idx, "", id_out);
 }
