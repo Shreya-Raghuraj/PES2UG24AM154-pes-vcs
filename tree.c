@@ -198,3 +198,4 @@ int tree_from_index(ObjectID *id_out) {
     if (index_load(&idx) != 0) return -1; 
     return build_recursive(&idx, "", id_out);
 }
+ 
